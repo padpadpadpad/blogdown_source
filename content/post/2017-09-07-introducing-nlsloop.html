@@ -1,0 +1,165 @@
+---
+title: "Introducing nlsLoop"
+author: "Daniel Padfield"
+date: 2016-09-08T21:13:14-05:00
+slug: introducing-nlsloop
+categories: ["R"]
+tags: ["nlsLoop", "non-linear regression"]
+draft: false
+---
+
+
+
+<div id="introduction" class="section level2">
+<h2>Introduction</h2>
+<p>So you have data you want to fit to a non-linear model…</p>
+<p>This blog post assumes you have a non-linear model formulation you want to fit to non-linear data and are aware of the excellent <code>nlme</code> package by Pinheiro and Bates and their <a href="Mixed-Effects%20Models%20in%20S%20and%20S-PLUS%20(Statistics%20and%20Computing)">book</a> that nicely explains how to use it. This would be my first port of call if you want to understand the simplicities and complexities of fitting non-linear models and mixed effect models in general.</p>
+<p>This blog post is less about when to use non-linear regression or non-linear mixed effects models but more about a method of ensuring the <strong>best fit each curve</strong> to its data.</p>
+<p>When fitting non-linear models to data, it is common to want to fit the same model to multiple levels of a factor. In this situation <code>nlme::nlsList()</code> is often used to loop through levels of factor such as <code>nlsList(Y ~ function(X)|factor)</code>. However, <code>nlsList()</code> only allows a single set of starting parameters.</p>
+<p>If you have a dataset where every level of the factor fits the same model, but spans several magnitudes of parameter values, you will be familiar with the error:</p>
+<p><code>Error in nlsList(Y ~ function(X)|factor): singular gradient</code></p>
+<p>that is often caused by starting parameters being too far away from the actual values in parameter space. This often means <code>nlsList()</code> is inadequate for fitting multiple non-linear models.</p>
+<p><code>nlsLoop</code> is a package hosted on <a href="https://github.com/padpadpadpad/TeamPhytoplankton">GitHub</a> that allows multiple starting values to be used to ensure the best fit to each separate curve. <code>nlsLoop::nlsLoop()</code> fits the same model over a level of a factor and allows multiple starting values and picks the best model using AIC score.</p>
+<div id="key-parameters-of-nlsloop" class="section level4">
+<h4>Key parameters of nlsLoop()</h4>
+<ul>
+<li>model: the non-linear model specification</li>
+<li>data: the raw data frame</li>
+<li>tries: the number of combinations of starting values you want the model to try</li>
+<li>id_col: the column that has a unique identifier for each specific curve you want to model</li>
+<li>param_bds: a vector specifying the boundaries of your starting parameter estimates. It is important to <strong>LOOK</strong> at your data and previous literature at this point to try and work what reasonable ranges of parameters are!
+<ul>
+<li>These are specified as c(lower bound parameter 1, upper bound parameter 1, lower bound parameter 2, upper bound parameter 2, lower bound parameter <em>n</em>, upper bound parameter <em>n</em>).</li>
+</ul></li>
+<li><em>r<sup>2</sup></em> : whether or not you want to calculate an <em>r<sup>2</sup></em> value for each of your fits. This parameter comes with a <a href="http://stackoverflow.com/questions/14530770/calculating-r2-for-a-nonlinear-model">warning</a> that <em>r<sup>2</sup></em> do not mean the same things for non-linear models as they do for linear models<sup>[1]</sup>.</li>
+</ul>
+</div>
+</div>
+<div id="using-nlsloop" class="section level2">
+<h2>Using nlsLoop</h2>
+<div id="load-in-packages-and-install-nlsloop" class="section level4">
+<h4>1. Load in packages and install nlsLoop</h4>
+<pre class="r"><code>devtools::install_github(&#39;padpadpadpad/nlsLoop&#39;)
+
+library(nlsLoop)
+library(dplyr)
+library(magrittr)
+library(tidyr)
+library(ggplot2)</code></pre>
+</div>
+<div id="load-in-data-frame-and-initial-plot" class="section level4">
+<h4>2. Load in data frame and initial plot</h4>
+<p>The data we shall use for this tutorial are a bunch of thermal performance curves showing the relationship between metabolic rates and temperature in the aquatic alga, <em>Chlorella vulgaris</em><sup>[2]</sup>.</p>
+<p>So enough talking, lets load in the data and have an initial look at the data.</p>
+<pre class="r"><code>data(&quot;Chlorella_TRC&quot;)
+
+head(Chlorella_TRC)</code></pre>
+<pre><code>##   curve_id growth.temp     process        flux temp      K    ln.rate
+## 1        1          20 acclimation respiration   16 289.15 -2.0625783
+## 2        1          20 acclimation respiration   19 292.15 -1.3243794
+## 3        1          20 acclimation respiration   22 295.15 -0.9541681
+## 4        1          20 acclimation respiration   25 298.15 -0.7944367
+## 5        1          20 acclimation respiration   28 301.15 -0.1820364
+## 6        1          20 acclimation respiration   31 304.15  0.1742401</code></pre>
+<p>As you can see, and read about in the <a href="http://onlinelibrary.wiley.com/doi/10.1111/ele.12545/full">paper</a> (<strong>YES, THIS IS A PLUG</strong>), we have rates of metabolism for both photosynthesis and respiration across 5 different growth temperatures after both 10 (acclimation) and 100 (adaptation) generations of growth, so we can have a go at an initial plot accordingly…</p>
+<pre class="r"><code>ggplot(Chlorella_TRC) +
+  geom_point(aes(temp, ln.rate, col = growth.temp), shape = 21, size = 2, alpha = 0.5) +
+  facet_wrap(~flux + process, labeller = labeller(.multi_line = F)) +
+  scale_colour_gradient(low = &#39;blue&#39;, high = &#39;red&#39;, &#39;Growth Temperature&#39;) +
+  theme_bw(base_size = 16, base_family = &#39;Helvetica&#39;) +
+  ylab(&#39;log Metabolic rate&#39;) +
+  xlab(&#39;Assay temperature (ºC)&#39;)</code></pre>
+<p><img src="/post/2017-09-07-introducing-nlsloop_files/figure-html/first%20plot-1.png" width="1152" /></p>
+<p>The data follows a classic unimodal thermal performance curve and can be modelled using a modified version of the Sharpe-Schoolfield model<sup>[3]</sup>. A function characterising the model is provided in the package as <code>schoolfield.high()</code>. This is more about the fitting of non-linear curves than the model so that’s as in depth as I will go here!</p>
+<p>The data has 60 separate curves and <code>id_col = curve_id</code>. So lets fit the model!</p>
+</div>
+<div id="run-nlsloop" class="section level4">
+<h4>3. Run nlsLoop</h4>
+<p><code>nlsLoop::nlsLoop()</code> uses <code>minpack.lm::nlsLM()</code> to fit each individual curve allows addiitional arguments such as <code>lower</code> and <code>na.action</code> accordingly. The best fit for each factor level is determined using AIC scores and if the best fit does not change for 100 “tries” then it will move onto the next level of the factor.</p>
+<pre class="r"><code>fits &lt;- nlsLoop(ln.rate ~ schoolfield.high(ln.c, Ea, Eh, Th, temp = K, Tc = 20),
+                     data = Chlorella_TRC,
+                     tries = 500,
+                     id_col = &#39;curve_id&#39;,
+                     param_bds = c(-10, 10, 0.1, 2, 0.5, 5, 285, 330),
+                     r2 = &#39;Y&#39;,
+                     supp.errors = &#39;Y&#39;,
+                     AICc = &#39;Y&#39;,
+                     na.action = na.omit,
+                     lower = c(ln.c=-10, Ea=0, Eh=0, Th=0))</code></pre>
+<p><strong>WARNING: This may take quite a while depending on how good your parameter boundaries are!</strong></p>
+<p>The result of this returns an <code>nlsLoop</code> object that is made up of <code>params</code> which has all of our parameter values for each individual fit and <code>predictions</code> which is a high resolution predicted dataframe to allow for a smooth curve on a plot (which we will come to later).</p>
+<p>These can be accessed simply using <code>fits$params</code> or <code>fits$predictions</code>.</p>
+<pre class="r"><code>head(fits$params)</code></pre>
+<pre><code>##   curve_id      ln.c        Ea       Eh       Th      AIC  quasi.r2
+## 1        1 -1.346211 0.9877307 4.332645 312.1887 48.01896 0.4608054
+## 2        2 -1.349431 1.0653450 4.211374 312.6591 22.39398 0.8978426
+## 3        3 -1.815315 1.1155333 4.140395 310.9545 34.77114 0.7804032
+## 4        4 -1.612615 1.0982576 3.025816 310.6412 31.04688 0.8709134
+## 5        5 -1.767711 1.1244277 9.010641 317.0688 41.69970 0.7602547
+## 6        6 -1.717258 1.1727047 4.077252 311.4596 37.03555 0.7289198</code></pre>
+<p>Having all of these in a single <code>nlsLoop</code> object allows a simple plotting method to assess how good our fits to the data are. One of the best ways to assess non-linear model is by <strong>ACTUALLY LOOKING</strong> at how well every model fits its respective raw data.</p>
+</div>
+<div id="plotting" class="section level4">
+<h4>4. Plotting</h4>
+<p>Firstly lets have a look at a single level of <code>curve_id</code>, a function called <code>plot_id_nlsLoop()</code> allows this.</p>
+<pre class="r"><code>plot_id_nlsLoop(raw_data = Chlorella_TRC, param_data = fits, id = &#39;1&#39;)</code></pre>
+<pre><code>## Warning: Removed 750 rows containing missing values (geom_path).</code></pre>
+<pre><code>## Warning: Removed 36 rows containing missing values (geom_point).</code></pre>
+<p><img src="/post/2017-09-07-introducing-nlsloop_files/figure-html/first%20fit%20plot-1.png" width="768" /></p>
+<p>Not a bad fit… Further to this, <code>plot_all_nlsLoop()</code> will produce a pdf with each plot on a new sheet.</p>
+<pre class="r"><code>plot_all_nlsLoop(&#39;path/of/where/you/want/to/save/me.pdf&#39;, raw_data = Chlorella_TRC, param_data = fits)</code></pre>
+</div>
+<div id="exploratory-analysis" class="section level4">
+<h4>5. Exploratory analysis</h4>
+<p>We can now edit some of the dataframes to look at the curves split by the treatments within the dataset and explore how the parameter values change across the treatments.</p>
+<p>For example we can plot all the curves split by respiration, photosynthesis and acclimatory or adaptive timescales.</p>
+<pre class="r"><code># select treatment columns from original dataset
+treatments &lt;- select(Chlorella_TRC, c(curve_id, process, growth.temp, flux))
+# keep unique combinations of treatments
+treatments &lt;- unique(treatments[,colnames(treatments)])
+
+# bind treatments to predictions and parameter dataframe
+fits$params &lt;- merge(fits$params, treatments, by = &#39;curve_id&#39;)
+fits$predictions &lt;- merge(fits$predictions, treatments, by = &#39;curve_id&#39;)
+
+# plot every curve
+ggplot() +
+  geom_point(aes(K, ln.rate, col = growth.temp), shape = 21, size = 2, alpha = 0.25, Chlorella_TRC) +
+  geom_line(aes(K, ln.rate, col = growth.temp, group = curve_id), linetype = 2, alpha = 0.5, fits$predictions) +
+  facet_wrap(~flux + process, labeller = labeller(.multi_line = F)) +
+  scale_colour_gradient(low = &#39;blue&#39;, high = &#39;red&#39;, &#39;Growth Temperature&#39;) +
+  theme_bw(base_size = 16, base_family = &#39;Helvetica&#39;) +
+  ylab(&#39;log Metabolic rate&#39;) +
+  xlab(&#39;Assay temperature (ºC)&#39;)</code></pre>
+<p><img src="/post/2017-09-07-introducing-nlsloop_files/figure-html/data%20wrangling-1.png" width="1152" /></p>
+<p>We can also start having a quick look at any differences between parameters…</p>
+<pre class="r"><code>gather(fits$params, &#39;parameter&#39;, &#39;value&#39;, c(ln.c, Ea, Eh, Th)) %&gt;%
+  ggplot(.) +
+  geom_point(aes(growth.temp, value, col = flux, shape = process), fill = &#39;white&#39;, size = 2, position = position_dodge(width = 0.25)) +
+  facet_wrap(~ parameter, scales = &#39;free_y&#39;) +
+  scale_color_manual(values = c(&#39;green4&#39;, &#39;black&#39;)) +
+  scale_shape_manual(values = c(21, 24)) +
+  theme_bw(base_size = 16, base_family = &#39;Helvetica&#39;)</code></pre>
+<p><img src="/post/2017-09-07-introducing-nlsloop_files/figure-html/parameter%20plots-1.png" width="960" /></p>
+<p>From here we can see that the activation energy (<em>E<sub>a</sub></em>) in the model does not change systematically with growth temperature or whether it has acclimated or adapted to the growth temperature. However a body of work has shown that photosynthesis should be less sensitive to temperature change (a lower <em>E<sub>a</sub></em>) than that of respiration.</p>
+<pre class="r"><code>ggplot(fits$params, aes(flux, Ea)) +
+  geom_boxplot(aes(fill = flux, col = flux), outlier.shape = NA, width = 0.5) +
+  stat_summary(geom = &#39;crossbar&#39;, fatten = 0, color = &#39;white&#39;, width = 0.5, fun.data = function(x){ return(c(y=median(x), ymin=median(x), ymax=median(x)))}) +
+  geom_jitter(aes(flux, Ea, col = flux), shape = 21, fill =&#39;white&#39;, width = 0.25, height = 0) +
+  theme_bw(base_size = 16, base_family = &#39;Helvetica&#39;) +
+  scale_color_manual(values = c(&#39;green4&#39;, &#39;black&#39;)) +
+  scale_fill_manual(values = c(&#39;green4&#39;, &#39;black&#39;)) +
+  ylab(&#39;Activation enrrgy (eV)&#39;) +
+  xlab(&#39;Flux&#39;)</code></pre>
+<p><img src="/post/2017-09-07-introducing-nlsloop_files/figure-html/Ea%20plots-1.png" width="768" /></p>
+<p>And as we can see it looks like we have a difference in the activation energies, with photosynthesis having a lower activation energy than respiration.</p>
+<p>So from there we can start exploring our data and formally analysing our parameters! <code>nlsLoop</code> allows us to have confidence in our fitting of all the curves and gives us an easy way of plotting and manipulating the data afterwards!</p>
+<p>Happy model fitting. Any comments much appreciated.</p>
+</div>
+<div id="references" class="section level3">
+<h3>References:</h3>
+<p>[1] Spiess, A.N. &amp; Neumeyer, N. (2010). An evaluation of R<sup>2</sup> as an inadequate measure for nonlinear models in pharmacological and biochemical research: a Monte Carlo approach. BMC Pharmacology, 10, 6.</p>
+<p>[2] Padfield, D., Yvon-durocher, G., Buckling, A., Jennings, S. &amp; Yvon-durocher, G. (2015). Rapid evolution of metabolic traits explains thermal adaptation in phytoplankton. Ecology Letters, 19(2), 133-142.</p>
+<p>[3] Schoolfield, R.M., Sharpe, P.J. &amp; Magnuson, C.E. (1981). Non-linear regression of biological temperature-dependent rate models based on absolute reaction-rate theory. J. Theoretical Biology, 88, 719–31.</p>
+</div>
+</div>

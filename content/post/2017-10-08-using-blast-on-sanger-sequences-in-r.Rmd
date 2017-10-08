@@ -5,7 +5,7 @@ date: '2017-10-08'
 slug: using-blast-on-sanger-sequences-in-r
 categories: ["R"]
 tags: ["sanger sequencing", "R", "BLAST", "genomics", "taxize"]
-draft: yes
+draft: no
 ---
 
 ```{r, setup, echo = FALSE}

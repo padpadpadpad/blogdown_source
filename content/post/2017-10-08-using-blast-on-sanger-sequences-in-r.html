@@ -1,0 +1,189 @@
+---
+title: Doing local BLAST searches on sanger sequence data in R
+author: "Daniel Padfield"
+date: '2017-10-08'
+slug: using-blast-on-sanger-sequences-in-r
+categories: ["R"]
+tags: ["sanger sequencing", "R", "BLAST", "genomics", "taxize"]
+draft: yes
+---
+
+
+
+<div id="introduction" class="section level2">
+<h2>Introduction</h2>
+<p>Moving to a microbiology group has meand I now have loads of interesting genomic and sequencing data to play with!</p>
+<p>One common task we have when we start with some new natural communities is to work out what is in there! We plate the samples out, look at their colony morphology, but colonies can be picked and sequenced using sanger sequencing. Once you have your sequencing data back, you can check your sequence against a database to look at the taxonomic identity of the picked colonies.</p>
+<p>I know that these sequences can be queried in <a href="https://blast.ncbi.nlm.nih.gov/Blast.cgi">BLAST</a>, where you enter a sequence and it returns matches from a database based on the percentage match. That is all pretty great but I am not about inputting 96 separate sequences into a website! So on Friday I explored the ways to do BLAST searches in a more automated way and came across <a href="https://github.com/mhahsler/rBLAST">rBLAST</a>. <code>rBLAST</code> is an R package that allows for local blast searches to be done in R.</p>
+<p>This blog post is the culmination of about 5 hours coding that explains how you can go from sequences in a folder, to a dataframe of species names to each sequence. To do this I use <code>rBLAST</code> to run the local BLAST search, assign taxonomy using the <code>taxise</code> package, as well as some tidyverse tools from <code>dplyr</code>, <code>tidyr</code> and <code>purrr</code> to make everything work smoothly.</p>
+</div>
+<div id="get-everything-installed" class="section level2">
+<h2>1. Get everything installed</h2>
+<p>Firstly everything that is used needs to be installed: - BLAST+ needs to be installed externally from R. Advice and instructions for installation can be found <a href="https://www.ncbi.nlm.nih.gov/books/NBK279671/">here</a> - Install any packages available on CRAN using <code>install.packages(c(&quot;dplyr&quot;, &quot;purrr&quot;, &quot;tidyr&quot;)</code> - Bioconductor provides tools for the analysis of high throughput genomic data. Some of the packages on their are not available on CRAN but can be installed using instructions on their <a href="https://www.bioconductor.org/install/">website</a>. Specifically we need to download <code>Biostrings</code> for <code>rBlast</code> to work. - GitHub packages can be installed using <code>devtools::install_github()</code>. Install <code>rBLAST</code> using <code>devtools::install_github(mhahsler/rBLAST)</code></p>
+<p>Hopefully all the necessary packages to run local BLAST searches in R are now installed. Now we can load in some data!</p>
+</div>
+<div id="set-up-and-loading-in-data" class="section level2">
+<h2>2. Set up and loading in data</h2>
+<p>The output from sanger sequencing (although I am not well versed in it) appears to be one file per sample and all the output (including consensus scores) is present in .ab1 files. However I also received .seq files that acted as .txt files that stored the output of each sequence in. So in <code>file_1.seq</code> the output would be “CATGCAGTAGCT…” and so on.</p>
+<p>I am going to use these .seq files to illustrate how to use rBLAST, but this script should be easily adaptable to file types as long as you can access each sequence!</p>
+<pre class="r"><code># load packages into R
+library(rBLAST)
+library(taxize)
+library(dplyr)
+library(tidyr)
+library(purrr)</code></pre>
+<p>Then we want to list all the files in the data folder (because you keep all your raw data in separate folders and don’t edit them under any circumstances… <strong>RIGHT?!?</strong>). As an aside, learn about good workflows in R <a href="https://github.com/jdblischak/workflowr">here</a> or <a href="https://swcarpentry.github.io/r-novice-gapminder/02-project-intro/">here</a>.</p>
+<pre class="r"><code># list files in the data folder
+seq_files &lt;- list.files(&#39;raw_data&#39;, pattern = &#39;.seq&#39;)
+
+# store file path
+seq_file_path &lt;- &#39;where_your_files_are_saved&#39;
+
+# check they been found/we are in the right place
+seq_files
+
+# open a single file
+read.table(file.path(seq_file_path,seq_file[1]), blank.lines.skip = TRUE, as.is = TRUE)</code></pre>
+<pre><code>## [1] &quot;file_1.seq&quot; &quot;file_2.seq&quot; &quot;file_3.seq&quot; &quot;file_4.seq&quot; &quot;file_5.seq&quot;
+## [6] &quot;file_6.seq&quot; &quot;file_7.seq&quot;</code></pre>
+<pre><code>##                                                                                 V1
+## 1 NNNNNNNNNNNGNNNNCTGGNCNNAANCGCGCGTAGGTGGNTCGTTAAGTTGGANGTGANTCCCCGGGCTCNNCCTGGGA
+## 2 ACTGCATTCAAAACTGACGAGCTAGAGTATGGTAGAGGGTGGTGGAATTTCCTGTGTAGCGGTGAAATGCGTAGATATAG
+## 3 GAAGGAACACCAGTGGCGAAGGNGACCACCTGGACTGATACTGACACTGAGGTGCGAAAGCGTGGGGAGCAAACAGGANT
+## 4                                                                AGNNNNNNNNGTAGTNN</code></pre>
+<p>So our sequence is there, all pretty and ready for alignment. However, to do local BLAST searches, we need to download a database to query our own sequences against. So we will download a 16S Microbial database from the ncbi website. This step only has to be done once and can be done within R, you just need to make a new folder (so the database files are in a separate folder) to extract the zipped files into.</p>
+<pre class="r"><code># download file
+download.file(url = &quot;ftp://ftp.ncbi.nlm.nih.gov/blast/db/16SMicrobial.tar.gz&quot;, destfile = &quot;16SMicrobial.tar.gz&quot;, mode = &#39;wb&#39;)
+
+# extract files from zipped file
+untar(&quot;16SMicrobial.tar.gz&quot;, exdir = &quot;blast_16SMicrobial_db&quot;)
+
+# load database into R
+bl &lt;- blast(db = &quot;blast_16SMicrobial_db/16SMicrobial&quot;)</code></pre>
+<p>We are now ready to do local BLAST searches on each file in our sequence folder, <code>seq_file_path</code>.</p>
+</div>
+<div id="run-multiple-local-blast-searches" class="section level2">
+<h2>2. Run multiple local BLAST searches</h2>
+<p>It is common practice in R to do the same function over and over on multiple groups of a column (or elements in a vector) in R. For in my work I often take multiple .csv or .xlsx files, run them through a function where I grab only the information I want, and then bind them into a single dataframe. I used to use <code>plyr::ldply()</code> for this purpose but have recently moved across to <code>purrr::map_df()</code> as it is more compatible with <code>dplyr</code> and <code>tidyr</code>.</p>
+<p>When going about this process, I first think what I want my output to be and then get the desired output for just a single file/element. Finally, if I can, I wrap the steps up in a function so that it can be rolled out again and again! There are loads of resources on <a href="http://adv-r.had.co.nz/Functions.html">writing functions</a> and <a href="https://stackoverflow.com/questions/4442518/general-suggestions-for-debugging-in-r">debugging R code</a> that should put you in the right direction for your own problems better than I can here.</p>
+<p>In this example, we want a function that takes a single <code>.seq</code> file and returns a <code>data.frame</code> containing the BLAST search hit results.</p>
+<pre class="r"><code># function for a single local BLAST search for a single file
+rBLAST_all &lt;- function(seq_file, database, keep = 0.95){
+  
+  # read in and create single sequence line
+  test &lt;- read.table(seq_file, blank.lines.skip = TRUE, as.is = TRUE)
+  seq1 &lt;- paste(test$V1, collapse = &#39;&#39;)
+  
+  # make a string set necessary for rBLAST and name file
+  seq2 &lt;- Biostrings::BStringSet(seq1)
+  names(seq2) &lt;- basename(seq_file)
+  
+  # use rBLAST and add sequence to subsequent dataframe
+  seq_pred &lt;- predict(database, seq2) %&gt;%
+    dplyr::filter(., Perc.Ident &gt; keep*100) %&gt;%
+    dplyr::mutate_at(., c(&#39;QueryID&#39;, &#39;SubjectID&#39;), as.character) %&gt;%
+    dplyr::mutate(seq = seq1)
+  
+  # return dataframe  
+  return(seq_pred)
+}</code></pre>
+<p>This function takes a single file, e.g. <code>file_1.seq</code>, reads it in and gets the sequence. It then makes the dataset into a <code>DNAStringSet</code>, a special object type in R that rBLAST needs the sequence to be in. I then also assigned the name of the file to the sequence so each row in the final data frame has an identifier.</p>
+<p>I then call <code>rBLAST</code> and do local BLAST alignment on the sequence using its <code>predict()</code> function. I have added a parameter, <code>keep</code>, that controls the % similarity of the hits to retain in the dataframe. Anything under that proportion will be discarded.</p>
+<p>The key to adapting this function for your own needs is to get the desired input and output of your start file, Once you’ve read in one of your files and made it a <code>DNAStringSet</code> running them through BLAST should be ok.</p>
+<p>We can run this function on a single file and see if the output is what we want.</p>
+<pre class="r"><code># run on the first file
+test &lt;- rBLAST_all(file.path(seq_file_path, seq_files[1]), database = bl)
+
+# look at names of columnes
+names(test)</code></pre>
+<pre><code>##  [1] &quot;QueryID&quot;          &quot;SubjectID&quot;        &quot;Perc.Ident&quot;      
+##  [4] &quot;Alignment.Length&quot; &quot;Mismatches&quot;       &quot;Gap.Openings&quot;    
+##  [7] &quot;Q.start&quot;          &quot;Q.end&quot;            &quot;S.start&quot;         
+## [10] &quot;S.end&quot;            &quot;E&quot;                &quot;Bits&quot;            
+## [13] &quot;seq&quot;</code></pre>
+<pre class="r"><code># look at first 6 rows of data, seq column removed (LONG!)
+head(select(test, -seq))</code></pre>
+<pre><code>##      QueryID   SubjectID Perc.Ident Alignment.Length Mismatches
+## 1 file_1.seq NR_029042.2     95.890              219          8
+## 2 file_1.seq NR_126220.1     95.434              219          9
+## 3 file_1.seq NR_117177.1     95.434              219          9
+## 4 file_1.seq NR_116299.1     95.434              219          9
+## 5 file_1.seq NR_028906.1     95.434              219          9
+## 6 file_1.seq NR_024950.1     95.434              219          9
+##   Gap.Openings Q.start Q.end S.start S.end         E Bits
+## 1            1      25   242     560   778 7.09e-102  368
+## 2            1      25   242     546   764 3.30e-100  363
+## 3            1      25   242     558   776 3.30e-100  363
+## 4            1      25   242     541   759 3.30e-100  363
+## 5            1      25   242     579   797 3.30e-100  363
+## 6            1      25   242     556   774 3.30e-100  363</code></pre>
+<p><strong>Yay!</strong> A dataframe of alignments much like you would see in BLAST. Pretty amazing. We can then run that function on all of our <code>.seq</code> files using <code>purrr::map_df()</code>.</p>
+<pre class="r"><code># update our files to have the full names
+seq_files = paste(seq_file_path, seq_files, sep = &#39;/&#39;)
+
+# run rBlast all
+seq_IDs &lt;- purrr::map_df(seq_files, rBLAST_all, database = bl, keep = 0.97) %&gt;%
+  # create column for nrow
+  mutate(., num = 1:n())
+
+# check number of rows
+nrow(seq_IDs)</code></pre>
+<pre><code>## [1] 54</code></pre>
+<p>This returns a dataframe of 54 hits across the 7 samples. The local BLAST alignments only return a <code>SubjectID</code> by default, which is the GenBankID number, but we want the species name of each sequence!</p>
+<p>I am going to demonstrate how this can be done using the R package <code>taxize</code>, that uses the NCBI API to get the taxonomy information.</p>
+</div>
+<div id="using-taxize-to-get-taxonomy" class="section level2">
+<h2>3. Using taxize to get taxonomy</h2>
+<p>The R package <code>taxize</code> interacts with a suite of web APIs for taxonomic jobs, such as getting database specific taxonomic identifiers, verifying species names and (<strong>importantly</strong>), getting species names from database IDs. A great tutorial and overview of <code>taxise</code> is on the <a href="https://ropensci.org/tutorials/taxize_tutorial.html">rOpenSci website</a>.</p>
+<p>As <code>SubjectID</code> in our dataframe is a GenBankID, we need to get the NCBI taxonomy UID for each of these and then get the taxonomy. <code>taxize</code> has functions to do this. To go from GenBankID -&gt; UID we shall use <code>taxize::genbank2uid()</code>. To go from UID -&gt; taxonomy we shall use <code>taxize::ncbi_get_taxon_summary</code>. To do the same function on row of our dataframe, I nested some of my data in a list within my existing dataframe. This gives a list column that I can use <code>purrr::map()</code> to add another list column to my dataframe, before unnesting them both again! If this sounds complex, you are not alone (and this is the first time I did it this way too), but I did find a couple of great examples on list columns, purrr and dplyr <a href="https://jennybc.github.io/purrr-tutorial/ls13_list-columns.html">here</a> and <a href="http://ijlyttle.github.io/isugg_purrr/presentation.html#(1)">here</a>. Here, this method helps ensure a single API call is used for each row of the dataframe and helps us control for possible errors, using <code>purrr::possibly()</code>.</p>
+<pre class="r"><code># reduce number of columns so we drop all of the gumph
+seq_IDs &lt;- select(seq_IDs, num, QueryID, SubjectID, Perc.Ident)
+
+# work out the uid from the genbank id - given as SubjectID
+# approach - nest each row in a list and call the API separately - return NA if it does not work
+seq_IDs_nest &lt;- seq_IDs %&gt;%
+  nest(., SubjectID) %&gt;%
+  mutate(., uid = map(data, possibly(genbank2uid, otherwise = NA, quiet = TRUE)))
+
+# unnest these columns to get the dataframes out. There shall be warnings but they are ok as the correct uids are preserved
+seq_IDs &lt;- seq_IDs_nest %&gt;%
+  unnest(data, uid)
+
+head(seq_IDs)</code></pre>
+<pre><code>##   num    QueryID Perc.Ident     uid   SubjectID
+## 1   1 file_3.seq     97.403 1775474 NR_134828.1
+## 2   2 file_4.seq     97.854 1649133 NR_145922.1
+## 3   3 file_4.seq     97.854  123899 NR_118635.1
+## 4   4 file_4.seq     97.854 1287737 NR_117708.1
+## 5   5 file_4.seq     97.854 1287736 NR_117707.1
+## 6   6 file_4.seq     97.854 1287735 NR_117706.1</code></pre>
+<p>Now we have the NCBI taxon summary ID, we can go ahead and get the taxonomy of each row, in much the same way as we got the NCBI taxon summary ID from the GenBank ID.</p>
+<pre class="r"><code># now nest uids of each row and run the get_taxon_summary API call on each list element
+seq_IDs_nest &lt;- seq_IDs %&gt;%
+  nest(., uid) %&gt;%
+  mutate(., tax_info = map(data, possibly(ncbi_get_taxon_summary, otherwise = NA, quiet = TRUE)))
+
+# unnest this dataframe for final dataframe of what everything is
+seq_IDs &lt;- seq_IDs_nest %&gt;%
+  unnest(tax_info) %&gt;%
+  select(., -data)
+
+# lets have a look
+head(seq_IDs)</code></pre>
+<pre><code>##   num    QueryID Perc.Ident   SubjectID     uid                       name
+## 1   1 file_3.seq     97.403 NR_134828.1 1775474    Variovorax guangxiensis
+## 2   2 file_4.seq     97.854 NR_145922.1 1649133      Bordetella tumulicola
+## 3   3 file_4.seq     97.854 NR_118635.1  123899        Bordetella trematum
+## 4   4 file_4.seq     97.854 NR_117708.1 1287737      Achromobacter anxifer
+## 5   5 file_4.seq     97.854 NR_117707.1 1287736 Achromobacter aegrifaciens
+## 6   6 file_4.seq     97.854 NR_117706.1 1287735     Achromobacter insuavis
+##      rank
+## 1 species
+## 2 species
+## 3 species
+## 4 species
+## 5 species
+## 6 species</code></pre>
+<p>And there you have it. We have a dataframe that now includes the species name of each of the returned hits for each file. Pretty neat if you ask me, and better than clicking over and over in BLAST on their website! This script is now ready to go again and again. Not bad for around 5 hours work! From this we can examine consensus within samples and look for variation across samples. The opportunities are endless.</p>
+<p>Thanks for reading. A script containing only the code chunks used here can be found <a href="https://gist.github.com/padpadpadpad/d2fe494b8392d0c84b40fe158caca834">here</a> and the files can be found in the <code>data/20171008_sanger</code> folder of my <a href="https://github.com/padpadpadpad/blogdown_source">GitHub blogdown repository</a> if you want to run through my example completely. You will just have to change the directories where the files are (or preferably use R projects)!</p>
+</div>

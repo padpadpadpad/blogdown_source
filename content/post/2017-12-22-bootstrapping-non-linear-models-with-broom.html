@@ -1,0 +1,19 @@
+---
+title: Bootstrapping non-linear models with broom
+author: Daniel Padfield
+date: '2017-12-22'
+slug: bootstrapping-non-linear-models-with-broom
+categories:
+  - R
+tags:
+  - non-linear regression
+draft: yes
+---
+
+
+
+<div id="introduction" class="section level2">
+<h2>Introduction</h2>
+<p>One problem with fitting non-linear models using least squares regression in R is that it has been difficult to show the uncertainty of predictions and of estimated parameters. For estimated parameters, there are functions to calculate the confidence intervals of each parameters using <strong>nlstools::confint2()</strong>.</p>
+<p>However it remains hard to visualise the uncertainty of the predictions, and the models sensitivity to the data collected. One method that can help is bootstrapping, where “new” datasets are produced from the existing data by sampling with replacement. The same model is then fitted over and over to different bootstraps of the data. Doing this many times allows us to visualise uncertainty of predictions and produce confidence intervals of each fit. This blog post was inspired by posts by Andrew MacDonald and Hadley Wickham, as well as a broom vignette. I have taken their approaches, applied them to my research field and kept the philosophy within the “tidyverse” set of tools.</p>
+</div>

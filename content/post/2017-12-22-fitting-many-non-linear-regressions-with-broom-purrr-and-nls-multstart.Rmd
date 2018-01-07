@@ -1,7 +1,7 @@
 ---
 title: Fitting non-linear regressions with broom, purrr and nls.multstart
 author: Daniel Padfield
-date: '2017-01-07'
+date: '2018-01-07'
 slug: fitting-non-linear-regressions-with-broom-purrr-and-nls.multstart
 categories:
   - R

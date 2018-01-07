@@ -5,7 +5,7 @@ date: 2016-09-08T21:13:14-05:00
 slug: introducing-nlsloop
 categories: ["R"]
 tags: ["nlsLoop", "non-linear regression"]
-draft: false
+draft: no
 ---
 
 ## Introduction
@@ -32,7 +32,7 @@ that is often caused by starting parameters being too far away from the actual v
 - data: the raw data frame
 - tries: the number of combinations of starting values you want the model to try
 - id_col: the column that has a unique identifier for each specific curve you want to model
-- param\_bds: a vector specifying the boundaries of your starting parameter estimates. It is important to __LOOK__ at your data and previous literature at this point to try and work what reasonable ranges of parameters are! 
+- param_bds: a vector specifying the boundaries of your starting parameter estimates. It is important to __LOOK__ at your data and previous literature at this point to try and work what reasonable ranges of parameters are! 
     - These are specified as c(lower bound parameter 1, upper bound parameter 1, lower bound parameter 2, upper bound parameter 2, lower bound parameter _n_, upper bound parameter _n_).
 - _r<sup>2</sup>_ : whether or not you want to calculate an _r<sup>2</sup>_ value for each of your fits. This parameter comes with a [warning](http://stackoverflow.com/questions/14530770/calculating-r2-for-a-nonlinear-model) that _r<sup>2</sup>_ do not mean the same things for non-linear models as they do for linear models<sup>[1]</sup>.
 
@@ -41,9 +41,7 @@ that is often caused by starting parameters being too far away from the actual v
 #### 1. Load in packages and install nlsLoop
 
 ```{r load in packages, message=FALSE, warning=FALSE}
-devtools::install_github('padpadpadpad/nlsLoop')
-
-library(nlsLoop)
+library(nlsLoop) # devtools::install_github('padpadpadpad/nlsLoop')
 library(dplyr)
 library(magrittr)
 library(tidyr)
@@ -61,6 +59,15 @@ So enough talking, lets load in the data and have an initial look at the data.
 data('Chlorella_TRC')
 
 head(Chlorella_TRC)
+
+# define the Sharpe-Schoolfield equation
+schoolfield_high <- function(lnc, E, Eh, Th, temp, Tc) {
+  Tc <- 273.15 + Tc
+  k <- 8.62e-5
+  boltzmann.term <- lnc + log(exp(E/k*(1/Tc - 1/temp)))
+  inactivation.term <- log(1/(1 + exp(Eh/k*(1/Th - 1/temp))))
+  return(boltzmann.term + inactivation.term)
+  }
 ```
 
 As you can see, and read about in the [paper](http://onlinelibrary.wiley.com/doi/10.1111/ele.12545/full) (__YES, THIS IS A PLUG__), we have rates of metabolism for both photosynthesis and respiration across 5 different growth temperatures after both 10 (acclimation) and 100 (adaptation) generations of growth, so we can have a go at an initial plot accordingly...
@@ -84,13 +91,13 @@ The data has 60 separate curves and `id_col = curve_id`. So lets fit the model!
 `nlsLoop::nlsLoop()` uses `minpack.lm::nlsLM()` to fit each individual curve allows addiitional arguments such as `lower` and `na.action` accordingly. The best fit for each factor level is determined using AIC scores and if the best fit does not change for 100 "tries" then it will move onto the next level of the factor.
 
 ```{r nlsLoop, message=FALSE, warning=FALSE, results='hide'}
-fits <- nlsLoop(ln.rate ~ schoolfield.high(ln.c, Ea, Eh, Th, temp = K, Tc = 20),
+fits <- nlsLoop(ln.rate ~ schoolfield_high(lnc, E, Eh, Th, temp = K, Tc = 20),
                      data = Chlorella_TRC,
                      tries = 500,
                      id_col = 'curve_id',
                      param_bds = c(-10, 10, 0.1, 2, 0.5, 5, 285, 330),
                      r2 = 'Y',
-                     supp.errors = 'Y',
+                     supp_errors = 'Y',
                      AICc = 'Y',
                      na.action = na.omit,
                      lower = c(ln.c=-10, Ea=0, Eh=0, Th=0))
@@ -114,13 +121,13 @@ Having all of these in a single `nlsLoop` object allows a simple plotting method
 Firstly lets have a look at a single level of `curve_id`, a function called `plot_id_nlsLoop()` allows this.
 
 ```{r first fit plot, fig.height=6, fig.width=8}
-plot_id_nlsLoop(raw_data = Chlorella_TRC, param_data = fits, id = '1')
+plot_id_nlsLoop(data = Chlorella_TRC, param_data = fits, id = '1')
 ```
 
 Not a bad fit... Further to this, `plot_all_nlsLoop()` will produce a pdf with each plot on a new sheet.
 
 ```{r pdf fits, eval=FALSE}
-plot_all_nlsLoop('path/of/where/you/want/to/save/me.pdf', raw_data = Chlorella_TRC, param_data = fits)
+plot_all_nlsLoop('path/of/where/you/want/to/save/me.pdf', data = Chlorella_TRC, param_data = fits)
 ```
 
 #### 5. Exploratory analysis
@@ -156,7 +163,7 @@ We can also start having a quick look at any differences between parameters...
 
 ```{r parameter plots, fig.height=8, fig.width=10}
 
-gather(fits$params, 'parameter', 'value', c(ln.c, Ea, Eh, Th)) %>%
+gather(fits$params, 'parameter', 'value', c(lnc, E, Eh, Th)) %>%
   ggplot(.) +
   geom_point(aes(growth.temp, value, col = flux, shape = process), fill = 'white', size = 2, position = position_dodge(width = 0.25)) +
   facet_wrap(~ parameter, scales = 'free_y') +
@@ -170,10 +177,10 @@ gather(fits$params, 'parameter', 'value', c(ln.c, Ea, Eh, Th)) %>%
 From here we can see that the activation energy (_E~a~_) in the model does not change systematically with growth temperature or whether it has acclimated or adapted to the growth temperature. However a body of work has shown that photosynthesis should be less sensitive to temperature change (a lower _E~a~_) than that of respiration.
 
 ```{r Ea plots, fig.height=6, fig.width=8}
-ggplot(fits$params, aes(flux, Ea)) +
+ggplot(fits$params, aes(flux, E)) +
   geom_boxplot(aes(fill = flux, col = flux), outlier.shape = NA, width = 0.5) +
   stat_summary(geom = 'crossbar', fatten = 0, color = 'white', width = 0.5, fun.data = function(x){ return(c(y=median(x), ymin=median(x), ymax=median(x)))}) +
-  geom_jitter(aes(flux, Ea, col = flux), shape = 21, fill ='white', width = 0.25, height = 0) +
+  geom_jitter(aes(flux, E, col = flux), shape = 21, fill ='white', width = 0.25, height = 0) +
   theme_bw(base_size = 16, base_family = 'Helvetica') +
   scale_color_manual(values = c('green4', 'black')) +
   scale_fill_manual(values = c('green4', 'black')) +

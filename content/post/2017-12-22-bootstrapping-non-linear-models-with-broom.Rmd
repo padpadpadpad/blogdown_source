@@ -1,18 +1,349 @@
 ---
-title: Bootstrapping non-linear models with broom
+title: Bootstrap non-linear regression with purrr and modelr
 author: Daniel Padfield
-date: '2017-12-22'
-slug: bootstrapping-non-linear-models-with-broom
+date: '2018-01-21'
+slug: bootstrapping-non-linear-regressions-with-purrr
 categories:
   - R
-tags:
-  - non-linear regression
-draft: yes
+tags: ["R", "nonlinear regression", "broom", "purrr", "tidy", "modelr", "bootstrap"]
+draft: no
 ---
 
 ## Introduction
 
-One problem with fitting non-linear models using least squares regression in R is that it has been difficult to show the uncertainty of predictions and of estimated parameters. For estimated parameters, there are functions to calculate the confidence intervals of each parameters using __nlstools::confint2()__. 
+For my first academic publication, a reviewer asked for the $r^{2}$ values of the thermal performance curves I fitted using non-linear regression. I bowed to the request as is often the case with reviewer comments, but would now resist as the $r^{2}$ is not necessarily an effective goodness of fit measure for non-linear regression (see this [SO answer](https://stackoverflow.com/questions/14530770/calculating-r2-for-a-nonlinear-model)). It does raise the question of how to determine how well a biologically meaningful model fits the data it is fitted to. I generally just plot every curve to its data, but it tells me nothing of the uncertainty around the curve.
 
-However it remains hard to visualise the uncertainty of the predictions, and the models sensitivity to the data collected. One method that can help is bootstrapping, where "new" datasets are produced from the existing data by sampling with replacement. The same model is then fitted over and over to different bootstraps of the data. Doing this many times allows us to visualise uncertainty of predictions and produce confidence intervals of each fit. This blog post was inspired by posts by Andrew MacDonald and Hadley Wickham, as well as a broom vignette. I have taken their approaches, applied them to my research field and kept the philosophy within the "tidyverse" set of tools.
+Step forward the bootstrap! Bootstrapping involes simulating "new" datasets produced from the existing data by sampling with replacement. The same model is then fitted separately on each individual bootstrapped dataset. Doing this over and over allows us to visualise uncertainty of predictions and produce confidence intervals of estimated parameters. This blog post was inspired by posts by [Andrew MacDonald](https://rstudio-pubs-static.s3.amazonaws.com/19698_a4c472606e3c43e4b94720506e49bb7b.html) and [Hadley Wickham](https://github.com/tidyverse/dplyr/issues/269), as well as a [broom vignette](https://cran.r-project.org/web/packages/broom/vignettes/bootstrapping.html) which use this approach. I have taken their approaches and again applied them to thermal performance curves. The __broom__ approach in these blog posts has since been replaced by __modelr::bootstrap()__, another package of the __tidyverse__.
+
+## Bootstrapping predictions for a single curve
+
+I will demonstrate this approach by using the thermal performance curves for phytoplankton metabolism that I used in a previous [post](https://padpadpadpad.github.io/post/fitting-non-linear-regressions-with-broom-purrr-and-nls.multstart/). The Sharpe-Schoolfield equation and meaning of the parameters can be found in more detail in the previous post.
+
+Firstly lets load the packages used in the script and write the Sharpe-Schoolfield model as a function.
+
+```{r install_and_load, message=FALSE, warning=FALSE, results='hide'}
+# load packages
+library(nls.multstart) # devtools::install_github('padpadpadpad/nls.multstart')
+library(patchwork) # devtools::install_github('thomasp85/patchwork')
+library(ggplot2)
+library(broom)
+library(purrr)
+library(dplyr)
+library(tidyr)
+library(nlstools)
+library(modelr)
+
+# write function for sharpe schoolfield model
+schoolfield_high <- function(lnc, E, Eh, Th, temp, Tc) {
+  Tc <- 273.15 + Tc
+  k <- 8.62e-5
+  boltzmann.term <- lnc + log(exp(E/k*(1/Tc - 1/temp)))
+  inactivation.term <- log(1/(1 + exp(Eh/k*(1/Th - 1/temp))))
+  return(boltzmann.term + inactivation.term)
+}
+```
+
+Then load in the data and have a look at the its structure using __glimpse()__.
+
+```{r, load_data}
+# load in data
+data(Chlorella_TRC)
+
+# look at data
+glimpse(Chlorella_TRC)
+```
+
+There are 60 curves here, 30 each for photosynthesis and respiration. The treatments are growth temperature (20, 23, 27, 30, 33 ºC) and adaptive process (acclimation or adaptation) that reflects the number of generations cultures were grown at each temperature. Bootstrapping the uncertainty on each individual curve is difficult for thermal performance curves because rates generally rapidly decrease after the optimum temperature, $T_{opt}$, making data collection difficult.
+
+This means it is likely some of the bootstraps will not include points after the optimum, making the unimodal model formulation unsuitable. Because of this I will pool the replicates curves within treatments together to demonstrate the bootstrapping approach, giving 20 curves in total. This post therefore ignores the non-independence of data points within replicates (a little naughty!).
+
+To bootstrap a single curve, we can filter the dataset for a single flux (photosynthesis) at a singe growth temperature (20 ºC) and generations of growth (~ 100) and plot the data.
+
+```{r, filter_data_and_plot, fig.height=4,  fig.width = 7}
+# filter for one curve
+d_examp <- filter(Chlorella_TRC, growth.temp == 20, flux == 'photosynthesis', process == 'adaptation')
+
+# plot 
+ggplot(d_examp, aes(K - 273.15, ln.rate)) +
+  geom_point(col = 'green4') +
+  ylab('log Metabolic rate') +
+  xlab('Assay temperature (ºC)') +
+  theme_bw(base_size = 12, base_family = 'Helvetica')
+```
+
+We can use __nls_multstart()__, that allows for [multiple start parameters](https://github.com/padpadpadpad/nls.multstart), to fit a single model to the data. We can then use __tidy()__ and __augment()__ from __broom__ to get the parameters and predictions of the model.
+
+```{r run_nls_mulstart, fig.height=4,  fig.width = 7}
+# run nls_multstart
+fit <- nls_multstart(ln.rate ~ schoolfield_high(lnc, E, Eh, Th, temp = K, Tc = 20),
+                     data = d_examp,
+                     iter = 500,
+                     param_bds = c(-10, 10, 0.1, 2, 0.5, 5, 285, 330),
+                     supp_errors = 'Y',
+                     AICc = 'Y',
+                     na.action = na.omit,
+                     lower = c(lnc = -10, E = 0, Eh = 0, Th = 0))
+
+# broom functions to tidy up model
+params <- tidy(fit)
+preds <- augment(fit)
+
+# plot with predictions
+ggplot(d_examp, aes(K - 273.15, ln.rate)) +
+  geom_point(col = 'green4') +
+  geom_line(aes(K - 273.15, .fitted), preds) +
+  ylab('log Metabolic rate') +
+  xlab('Assay temperature (ºC)') +
+  theme_bw(base_size = 12, base_family = 'Helvetica') +
+  ggtitle('Single TPC with fitted model')
+
+```
+
+This fit provides p-values and confidence intervals can be calculated using __nlstools::confint2()__. However, bootstrapping can provide confidence intervals around predictions and for estimated parameters. 
+
+The  __bootstrap()__ function in __modelr__ samples bootstrap replicates (here we do 200), each of which is randomly sampled with replacement. This creates a list column in our __tibble__ called `strap` which contains the bootsrapped dataset, and a new column called `boot_num` that is the number of that bootstrap (from 1 to 200).
+
+We can then create a new list column of the fit for each `strap` using __purrr::map()__.
+
+```{r}
+fit_boots <- d_examp %>% 
+  modelr::bootstrap(n = 200, id = 'boot_num') %>%
+  group_by(boot_num) %>%
+  mutate(fit = map(strap, ~nls_multstart(ln.rate ~ schoolfield_high(lnc, E, Eh, Th, temp = K, Tc = 20),
+                        data = data.frame(.),
+                        iter = 100,
+                        param_bds = c(-10, 10, 0.1, 2, 0.5, 5, 285, 330),
+                        lower = c(lnc=-10, E=0, Eh=0, Th=0),
+                        upper = c(lnc = 5, E = 10, Eh = 30, Th = 350),
+                        supp_errors = 'Y')
+  ))
+
+fit_boots
+```
+
+Each bootstrap replicate is stored in a list column within the __tibble__ . This then allows us to apply the __tidy()__ and __augment()__ functions used earlier, using __unnest()__ to combine the list column into a dataframe.
+
+```{r, tidy_models}
+# get parameters ####
+params_boot <- fit_boots %>%
+  unnest(fit %>% map(tidy)) %>%
+  ungroup()
+
+# get predictions
+preds_boot <- fit_boots %>%
+  unnest(fit %>% map(augment)) %>%
+  ungroup()
+```
+
+Using these two dataframes, we can plot each set of bootstrapped predictions alongside the fit of the original data, `preds`, and plot the distribution of each estimated parameter.
+
+The relatively new package [patchwork](https://github.com/thomasp85/patchwork) by Thomas Lin Pedersen can help add multiple graphs together simply by saying `plot_1 + plot_2`.
+
+```{r, get_confidence_intervals, fig.height=4,  fig.width = 8, message=FALSE}
+# plot distribution of estimated parameters
+p1 <- ggplot(params_boot, aes(estimate)) +
+  geom_histogram(col = 'black', fill = 'white') +
+  facet_wrap(~ term, scales = 'free_x')
+
+# plot points with predictions
+p2 <- ggplot() +
+  geom_line(aes(K - 273.15, .fitted, group = boot_num), preds_boot, alpha = .03) +
+  geom_line(aes(K - 273.15, .fitted), preds) +
+  geom_point(aes(K - 273.15, ln.rate), d_examp, col = 'green4') +
+  ylab('log Metabolic rate') +
+  xlab('Assay temperature (ºC)') +
+  theme_bw(base_size = 12, base_family = 'Helvetica')
+  
+# plot both
+p1 + p2
+```
+
+We can smooth our predictions over smaller increments of our predictor variable by passing a new dataset to __augment()__. Alongside this, for every value of the predictor we can calculate the 2.5% and 97.5% quantiles which gives confidence bands around the predictions. 
+
+Personally I prefer this approach rather than plotting each bootstrapped replicate.
+
+```{r, plot_smooth_preds, fig.height = 4,  fig.width = 7}
+# new data frame of predictions
+new_preds <- d_examp %>%
+  do(., data.frame(K = seq(min(.$K), max(.$K), length.out = 250), stringsAsFactors = FALSE))
+
+# create smooth predictions for best fit
+preds <- augment(fit, newdata = new_preds)
+
+# create smoother predictions for bootstrapped replicate
+preds <- fit_boots %>%
+  unnest(fit %>% map(augment, newdata = new_preds)) %>%
+  # group by each value of K and get quantiles
+  group_by(., K) %>%
+  summarise(lwr_CI = quantile(.fitted, 0.025),
+            upr_CI = quantile(.fitted, 0.975)) %>%
+  ungroup() %>%
+  merge(., preds, by = 'K')
+
+# plot
+ggplot() +
+  geom_point(aes(K - 273.15, ln.rate), d_examp) +
+  geom_line(aes(K - 273.15, .fitted), preds) +
+  geom_ribbon(aes(K - 273.15, ymin = lwr_CI, ymax = upr_CI), fill = 'green4', preds, alpha = .2) +
+  ylab('log Metabolic rate') +
+  xlab('Assay temperature (ºC)') +
+  theme_bw(base_size = 12, base_family = 'Helvetica') +
+  ggtitle('Single TPC with confidence intervals')
+```
+
+This is starting to look pretty nice, and is a great approach to visualising uncertainty of non-linear regressions for many types of data.
+
+From `params_boot` we can calculate confidence intervals of each estimated parameter by taking the desired quantiles of the data. This can be compared the output from __confint2()__ from __nlstools__.
+
+```{r, confint, fig.height = 5, fig.width = 7}
+# calculate confidence intervals of estimated parameters using confint2()
+confint_1 <- confint2(fit) %>%
+  data.frame() %>%
+  rename(., conf_low = X2.5.., conf_high = X97.5..) %>%
+  mutate(method = 'nlstools') %>%
+  cbind(., select(params, term, estimate)) %>%
+  select(., term, estimate, conf_low, conf_high, method)
+
+# calculate confidence intervals using bootstraps
+confint_2 <- group_by(params_boot, term) %>%
+  summarise(.,
+            conf_low = quantile(estimate, 0.025),
+            conf_high = quantile(estimate, 0.975),
+            estimate = quantile(estimate, 0.5)) %>%
+  ungroup() %>%
+  mutate(., method = 'boot')
+
+# bind both methods
+confint <- bind_rows(confint_1, confint_2)
+
+# plot each method side by side
+ggplot(confint, aes(method, estimate, col = method)) +
+  geom_point(size = 3) +
+  geom_linerange(aes(ymin = conf_low, ymax = conf_high)) +
+  facet_wrap(~ term, scales = 'free_y') +
+  theme_bw() +
+  theme(legend.position = 'none') +
+  ggtitle('Comparison of confidence interval calculation for estimated parameters')
+  
+```
+
+Bootstrapping gives similar mean estimates, but gives wider, asymmetric, confidence intervals compared to those calculated using __nlstools::confint2()__. In this instance this could be because I am only running 200 bootstrap replicates, whereas the number of bootstraps done in published analyses are commonly around 10,000.
+
+Crucially, bootstrapping allows the calculation of confidence intervals for parameters derived from the model that were not present in the initial fitting process. For example, the optimum temperature of a thermal performance curve, $T_{opt}$ is calculated as:
+
+$$T_{opt} = \frac{E_{h}T_{h}}{E_{h} + k T_{h} ln(\frac{E_{h}}{E} - 1)}$$
+We can calculate $T_{opt}$ for each iteration of the bootstrap and then plot the distribution of derived parameters. This can be done by using __tidyr::spread()__ to have a column for each estimated parameter, and then calculate `Topt` for each `boot_num`. 
+
+```{r, Topt, fig.width = 7, fig.height = 5, message=FALSE}
+# function for calculating Topt
+Topt <- function(E, Th, Eh){
+  return((Eh*Th)/(Eh + (8.62e-05 *Th*log((Eh/E) - 1))))
+}
+
+Topt_boot <- select(params_boot, boot_num, term, estimate) %>%
+  spread(., term, estimate) %>%
+  mutate(., Topt = Topt(E, Th, Eh))
+
+# plot distribution of Topt
+ggplot(Topt_boot, aes(Topt - 273.15)) +
+  geom_histogram(col = 'black', fill = 'white') +
+  xlab('Optimum Temperature (ºC)') +
+  ggtitle('Distribution of optimum temperatures via bootstrapping')
+
+```
+Bootstrapping allows us to get uncertainty estimates for parameters outside of the original curve fitting process!
+
+## Bootstrapping multiple curves
+
+Bootstrapping over each curve can be done by combining functions from the tidyverse to the __bootstrap()__ call. To fit a single model to each curve, I use __nest()__, __mutate()__ and __map()__ as shown [previously](https://padpadpadpad.github.io/post/fitting-non-linear-regressions-with-broom-purrr-and-nls.multstart). I searched for a way of using the same workflow for bootstrapping, and finally came across the [answer](https://github.com/tidyverse/broom/issues/25). Each element of `strap` is not strictly a dataframe (more of a promise to be a dataframe), so the only difference to fitting multiple non-linear regressions is the need to specify the `data` using `dataframe(.)` within __map()__.
+
+After grouping the dataframe, new datasets are bootstrapped using __modelr::bootstrap()__. Using __unnest()__ gives a new column called `boot_num` which represents the bootstrap replicate within each group. The tibble is then re-grouped to include `boot_num` and the model can finally be fitted to each bootstrapped dataset. Obviously the total number of models your code fits is increases as you up the number of bootstraps, so be aware this code may take a fair while to run!
+
+```{r, bootstrap_many}
+# run nls.multstart on each curve of the original data ####
+fit_many <- group_by(Chlorella_TRC, growth.temp, process, flux) %>%
+  nest() %>%
+  mutate(., fit = purrr::map(data, ~nls_multstart(ln.rate ~ schoolfield_high(lnc, E, Eh, Th, temp = K, Tc = 20),
+                                   data = .x,
+                                   iter = 500,
+                                   param_bds = c(-100, 100, 0.1, 2, 0.5, 10, 285, 330),
+                                   supp_errors = 'Y',
+                                   AICc = 'Y',
+                                   na.action = na.omit,
+                                   lower = c(lnc = -10, E = 0, Eh = 0, Th = 0))))
+
+# run bootstrap over many curves ####
+boot_many <- group_by(Chlorella_TRC, growth.temp, process, flux) %>%
+  # create 200 bootstrap replicates per curve
+  do(., boot = modelr::bootstrap(., n = 200, id = 'boot_num')) %>%
+  # unnest to show bootstrap number, .id
+  unnest() %>%
+  # regroup to include the boot_num
+  group_by(., growth.temp, process, flux, boot_num) %>%
+  # run the model using map()
+  mutate(fit = map(strap, ~nls_multstart(ln.rate ~ schoolfield_high(lnc, E, Eh, Th, temp = K, Tc = 20),
+                        data = data.frame(.),
+                        iter = 50,
+                        param_bds = c(-10, 10, 0.1, 2, 0.5, 5, 285, 330),
+                        lower = c(lnc=-10, E=0, Eh=0, Th=0),
+                        upper = c(lnc = 5, E = 10, Eh = 30, Th = 350),
+                        supp_errors = 'Y')
+  ))
+```
+
+Smooth predictions can then be calculated from `fit_many` and `boot_many` and plotted to demonstrate the uncertainty of multiple curves. I do some wrangling to get the `max` and `min` temperature of each curve so that I only plot predictions over the range of each specific curve (some have measurements up to 46 ºC, some to 49 ºC).
+
+```{r, plot_many, fig.height = 7, fig.width=7}
+# new data frame for smooth predictions
+new_preds <- Chlorella_TRC %>%
+  do(., data.frame(K = seq(min(.$K), max(.$K), length.out = 150), stringsAsFactors = FALSE))
+
+# get max and min for each curve
+max_min <- group_by(Chlorella_TRC, growth.temp, flux, process) %>%
+  summarise(., min_K = min(K), max_K = max(K)) %>%
+  ungroup()
+
+# create smoother predictions for unbootstrapped models
+preds_many <- fit_many %>%
+  unnest(fit %>% map(augment, newdata = new_preds))
+
+# create smoother predictions for bootstrapped replicates
+preds_many <- boot_many %>%
+  unnest(fit %>% map(augment, newdata = new_preds)) %>%
+  ungroup() %>%
+  # group by each value of K and get quantiles
+  group_by(., growth.temp, process, flux, K) %>%
+  summarise(lwr_CI = quantile(.fitted, 0.025),
+            upr_CI = quantile(.fitted, 0.975)) %>%
+  ungroup() %>%
+  merge(., preds_many, by = c('K', 'growth.temp', 'flux', 'process')) %>%
+  # merge with max_min to delete predictions outside of the max and min temperatures of each curve
+  merge(., max_min, by = c('growth.temp', 'flux', 'process')) %>%
+  group_by(., growth.temp, flux, process) %>%
+  filter(., K >= unique(min_K) & K <= unique(max_K)) %>%
+  rename(., ln.rate = .fitted) %>%
+  ungroup()
+
+# plot predictions 
+ggplot(Chlorella_TRC, aes(K - 273.15, ln.rate, group = flux)) +
+  geom_point(alpha = 0.5, size = 0.5) +
+  geom_line(data = preds_many) +
+  geom_ribbon(aes(ymin = lwr_CI, ymax = upr_CI, fill = flux), data = preds_many, alpha = .2) + 
+  scale_fill_manual(values = c('green4', 'black')) +
+  theme_bw(base_size = 12, base_family = 'Helvetica') +
+  ylab('log Metabolic rate') +
+  xlab('Assay temperature (ºC)') +
+  facet_wrap(~ process + growth.temp, labeller = labeller(.multi_line = FALSE)) +
+  theme_bw(base_size = 12, base_family = 'Helvetica') +
+  theme(legend.position = c(0.9, 0.15)) +
+  ggtitle('Multiple TPCs with confidence intervals')
+
+```
+
+When in doubt, it seems that __purrr__ has the answer. Bootstrapping is a super useful method for visualising the uncertainty of predictions for non-linear regressions, and better allow us to understand how well a particular model fits the data. The __tidyverse__, as usual, provides a set of tools that makes this method easy to understand and implement, sort of.
+
+## Next steps
+
+Another way of visualising uncertainty in predictions is by using a Bayesian approach. When using Stan, the `generated quantities{}` block is a great way to create new predictions from the data. This allows for models that can account for the structure of the data (i.e. temperatures within replicates) and visualise the uncertainty of the model fits. The package __brms__ looks to be a great help in fitting non-linear mixed models in a Bayesian framework. Just need to get round to experimenting with it!
+
 

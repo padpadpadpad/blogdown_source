@@ -180,7 +180,9 @@ seq_IDs <- select(seq_IDs, num, QueryID, SubjectID, Perc.Ident)
 # approach - nest each row in a list and call the API separately - return NA if it does not work
 seq_IDs_nest <- seq_IDs %>%
   nest(., SubjectID) %>%
-  mutate(., uid = map(data, possibly(genbank2uid, otherwise = NA, quiet = TRUE)))
+  mutate(., uid = map(data, possibly(genbank2uid, otherwise = NA, quiet = TRUE))) %>%
+  # take just the first element of the list
+  mutate(., uid = map(uid, 1))
 
 # unnest these columns to get the dataframes out. There shall be warnings but they are ok as the correct uids are preserved
 seq_IDs <- seq_IDs_nest %>%

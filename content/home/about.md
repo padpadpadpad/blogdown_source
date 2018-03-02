@@ -35,7 +35,7 @@ weight = 2
 
 I'm an ecologist studying how organisms adapt to change and how ecological processes scale from the very small (metabolism of a single cell) to the very big (ecosystem functions such as primary production).
 
-I finished my PhD in Cornwall under the supervision of Gabriel Yvon-Durocher and Angus Buckling in July 2017 and have now started a postdoc position with Angus looking at the importance of both ecological and evolutionary to community interactions, evolution and stability.
+I am interested in how and why communities coexist, and the feedbacks and indirect effects between ecological and evolutionary processes on species interactions within communities.
 
 ### The aim of this blog
 

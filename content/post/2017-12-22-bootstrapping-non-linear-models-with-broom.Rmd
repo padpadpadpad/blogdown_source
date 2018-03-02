@@ -9,6 +9,8 @@ tags: ["R", "nonlinear regression", "broom", "purrr", "tidy", "modelr", "bootstr
 draft: no
 ---
 
+_This post was updated on the 02/03/2018 to reflect changes to nls.multstart._
+
 ## Introduction
 
 For my first academic publication, a reviewer asked for the $r^{2}$ values of the thermal performance curves I fitted using non-linear regression. I bowed to the request as is often the case with reviewer comments, but would now resist as the $r^{2}$ is not necessarily an effective goodness of fit measure for non-linear regression (see this [SO answer](https://stackoverflow.com/questions/14530770/calculating-r2-for-a-nonlinear-model)). It does raise the question of how to determine how well a biologically meaningful model fits the data it is fitted to. I generally just plot every curve to its data, but it tells me nothing of the uncertainty around the curve.
@@ -78,9 +80,9 @@ We can use __nls_multstart()__, that allows for [multiple start parameters](http
 fit <- nls_multstart(ln.rate ~ schoolfield_high(lnc, E, Eh, Th, temp = K, Tc = 20),
                      data = d_examp,
                      iter = 500,
-                     param_bds = c(-10, 10, 0.1, 2, 0.5, 5, 285, 330),
+                     start_lower = c(lnc = -10, E = 0.1, Eh = 0.2, Th = 285),
+                     start_upper = c(lnc = 10, E = 2, Eh = 5, Th = 330),
                      supp_errors = 'Y',
-                     AICc = 'Y',
                      na.action = na.omit,
                      lower = c(lnc = -10, E = 0, Eh = 0, Th = 0))
 
@@ -112,9 +114,9 @@ fit_boots <- d_examp %>%
   mutate(fit = map(strap, ~nls_multstart(ln.rate ~ schoolfield_high(lnc, E, Eh, Th, temp = K, Tc = 20),
                         data = data.frame(.),
                         iter = 100,
-                        param_bds = c(-10, 10, 0.1, 2, 0.5, 5, 285, 330),
+                        start_lower = c(lnc = -10, E = 0.1, Eh = 0.2, Th = 285),
+                        start_upper = c(lnc = 10, E = 2, Eh = 5, Th = 330),
                         lower = c(lnc=-10, E=0, Eh=0, Th=0),
-                        upper = c(lnc = 5, E = 10, Eh = 30, Th = 350),
                         supp_errors = 'Y')
   ))
 
@@ -266,9 +268,9 @@ fit_many <- group_by(Chlorella_TRC, growth.temp, process, flux) %>%
   mutate(., fit = purrr::map(data, ~nls_multstart(ln.rate ~ schoolfield_high(lnc, E, Eh, Th, temp = K, Tc = 20),
                                    data = .x,
                                    iter = 500,
-                                   param_bds = c(-100, 100, 0.1, 2, 0.5, 10, 285, 330),
+                                   start_lower = c(lnc = -10, E = 0.1, Eh = 0.2, Th = 285),
+                                   start_upper = c(lnc = 10, E = 2, Eh = 5, Th = 330),
                                    supp_errors = 'Y',
-                                   AICc = 'Y',
                                    na.action = na.omit,
                                    lower = c(lnc = -10, E = 0, Eh = 0, Th = 0))))
 
@@ -284,9 +286,9 @@ boot_many <- group_by(Chlorella_TRC, growth.temp, process, flux) %>%
   mutate(fit = map(strap, ~nls_multstart(ln.rate ~ schoolfield_high(lnc, E, Eh, Th, temp = K, Tc = 20),
                         data = data.frame(.),
                         iter = 50,
-                        param_bds = c(-10, 10, 0.1, 2, 0.5, 5, 285, 330),
+                        start_lower = c(lnc = -10, E = 0.1, Eh = 0.2, Th = 285),
+                        start_upper = c(lnc = 10, E = 2, Eh = 5, Th = 330),
                         lower = c(lnc=-10, E=0, Eh=0, Th=0),
-                        upper = c(lnc = 5, E = 10, Eh = 30, Th = 350),
                         supp_errors = 'Y')
   ))
 ```

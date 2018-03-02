@@ -11,6 +11,7 @@ draft: no
 
 
 
+<p><em>This post was updated on the 02/03/2018 to reflect changes to nls.multstart.</em></p>
 <div id="introduction" class="section level2">
 <h2>Introduction</h2>
 <p>For my first academic publication, a reviewer asked for the <span class="math inline">\(r^{2}\)</span> values of the thermal performance curves I fitted using non-linear regression. I bowed to the request as is often the case with reviewer comments, but would now resist as the <span class="math inline">\(r^{2}\)</span> is not necessarily an effective goodness of fit measure for non-linear regression (see this <a href="https://stackoverflow.com/questions/14530770/calculating-r2-for-a-nonlinear-model">SO answer</a>). It does raise the question of how to determine how well a biologically meaningful model fits the data it is fitted to. I generally just plot every curve to its data, but it tells me nothing of the uncertainty around the curve.</p>
@@ -72,9 +73,9 @@ ggplot(d_examp, aes(K - 273.15, ln.rate)) +
 fit &lt;- nls_multstart(ln.rate ~ schoolfield_high(lnc, E, Eh, Th, temp = K, Tc = 20),
                      data = d_examp,
                      iter = 500,
-                     param_bds = c(-10, 10, 0.1, 2, 0.5, 5, 285, 330),
+                     start_lower = c(lnc = -10, E = 0.1, Eh = 0.2, Th = 285),
+                     start_upper = c(lnc = 10, E = 2, Eh = 5, Th = 330),
                      supp_errors = &#39;Y&#39;,
-                     AICc = &#39;Y&#39;,
                      na.action = na.omit,
                      lower = c(lnc = -10, E = 0, Eh = 0, Th = 0))
 
@@ -100,15 +101,15 @@ ggplot(d_examp, aes(K - 273.15, ln.rate)) +
   mutate(fit = map(strap, ~nls_multstart(ln.rate ~ schoolfield_high(lnc, E, Eh, Th, temp = K, Tc = 20),
                         data = data.frame(.),
                         iter = 100,
-                        param_bds = c(-10, 10, 0.1, 2, 0.5, 5, 285, 330),
+                        start_lower = c(lnc = -10, E = 0.1, Eh = 0.2, Th = 285),
+                        start_upper = c(lnc = 10, E = 2, Eh = 5, Th = 330),
                         lower = c(lnc=-10, E=0, Eh=0, Th=0),
-                        upper = c(lnc = 5, E = 10, Eh = 30, Th = 350),
                         supp_errors = &#39;Y&#39;)
   ))
 
 fit_boots</code></pre>
 <pre><code>## # A tibble: 200 x 3
-## # Groups: boot_num [200]
+## # Groups:   boot_num [200]
 ##    strap          boot_num fit      
 ##    &lt;list&gt;         &lt;chr&gt;    &lt;list&gt;   
 ##  1 &lt;S3: resample&gt; 001      &lt;S3: nls&gt;
@@ -240,9 +241,9 @@ fit_many &lt;- group_by(Chlorella_TRC, growth.temp, process, flux) %&gt;%
   mutate(., fit = purrr::map(data, ~nls_multstart(ln.rate ~ schoolfield_high(lnc, E, Eh, Th, temp = K, Tc = 20),
                                    data = .x,
                                    iter = 500,
-                                   param_bds = c(-100, 100, 0.1, 2, 0.5, 10, 285, 330),
+                                   start_lower = c(lnc = -10, E = 0.1, Eh = 0.2, Th = 285),
+                                   start_upper = c(lnc = 10, E = 2, Eh = 5, Th = 330),
                                    supp_errors = &#39;Y&#39;,
-                                   AICc = &#39;Y&#39;,
                                    na.action = na.omit,
                                    lower = c(lnc = -10, E = 0, Eh = 0, Th = 0))))
 
@@ -258,9 +259,9 @@ boot_many &lt;- group_by(Chlorella_TRC, growth.temp, process, flux) %&gt;%
   mutate(fit = map(strap, ~nls_multstart(ln.rate ~ schoolfield_high(lnc, E, Eh, Th, temp = K, Tc = 20),
                         data = data.frame(.),
                         iter = 50,
-                        param_bds = c(-10, 10, 0.1, 2, 0.5, 5, 285, 330),
+                        start_lower = c(lnc = -10, E = 0.1, Eh = 0.2, Th = 285),
+                        start_upper = c(lnc = 10, E = 2, Eh = 5, Th = 330),
                         lower = c(lnc=-10, E=0, Eh=0, Th=0),
-                        upper = c(lnc = 5, E = 10, Eh = 30, Th = 350),
                         supp_errors = &#39;Y&#39;)
   ))</code></pre>
 <p>Smooth predictions can then be calculated from <code>fit_many</code> and <code>boot_many</code> and plotted to demonstrate the uncertainty of multiple curves. I do some wrangling to get the <code>max</code> and <code>min</code> temperature of each curve so that I only plot predictions over the range of each specific curve (some have measurements up to 46 ºC, some to 49 ºC).</p>

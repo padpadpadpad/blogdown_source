@@ -7,12 +7,13 @@ draft = false
 widget = "about"
 
 # Order that this section will appear in.
-weight = 2
+weight = 1
 
 # List your academic interests.
 [interests]
   interests = [
-    "Metabolic theory",
+    "Microbial ecology",
+    "Effects of temperature on the biosphere",
     "Thermal adaptation",
     "Community ecology",
     "Reproducible research"
@@ -39,4 +40,4 @@ I am interested in how and why communities coexist, and the feedbacks and indire
 
 ### The aim of this blog
 
-This blog will hopefully serve as a platform for me to be me, mainly blogging about R and my research interests (and probably football).
+I aim to use this blog to post helpful R scripts, hopefully describe the work I do in an understandable way and write about the challenges of coping in academia while looking after a chronically ill partner.

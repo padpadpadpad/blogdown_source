@@ -1,0 +1,90 @@
+---
+title: Analysing your own Strava data in R using rStrava
+author: Daniel Padfield
+date: '2018-03-03'
+slug: analysing-your-own-strava-data-in-r-using-rstrava
+draft: true
+categories:
+  - R
+  - strava
+tags: ["strava"]
+---
+
+
+
+<p>Over the last 4 years I have consistently cycled around or over 2000 km a year around Cornwall. Almost all of these rides have been uploaded to Strava which has a suite of nice ways to visualise your performance and each ride.</p>
+<p>However, the ride data on Strava is mine, I have literally created it, and as such I looked for a way of accessing all of that beautiful data. One way would be to download all your .gpx files and read them in. That is going to be a lot of data. The alternative I settled on is rStrava, an R package which wraps the Strava API in many easy-to-use functions allowing access to all your glorious data.</p>
+<div id="installing-rstrava-and-creating-a-authorisation-token" class="section level2">
+<h2>Installing rStrava and creating a authorisation token</h2>
+<pre class="r"><code># load packages ####
+library(rStrava) # devtools::install_github(&#39;fawda123/rStrava&#39;)
+library(dplyr)
+library(tidyr)
+library(purrr)
+library(ggplot2)
+library(ggridges)
+library(GGally)
+
+# initial setup ####
+# Strava key
+app_name &lt;- &#39;xxxx&#39;
+app_client_id &lt;- &#39;xxxxx&#39;
+app_secret &lt;- &#39;&quot;xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx&quot;&#39;
+
+# create strava token
+my_token &lt;- httr::config(token = strava_oauth(app_name, app_client_id, app_secret))
+
+# Google elevation API key
+GoogleAPI &lt;- &#39;xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx&#39;</code></pre>
+</div>
+<div id="downloading-your-data" class="section level2">
+<h2>Downloading your data</h2>
+<pre class="r"><code># download strava data
+my_acts &lt;- get_activity_list(my_token, id = 2140248)
+
+# compile activities into a tidy dataframe
+my_acts &lt;- compile_activities(my_acts)
+
+# have a look at the dataframe
+dplyr::glimpse(my_acts)</code></pre>
+<p>Do some transformations.</p>
+<pre class="r"><code>desired_cols &lt;- desired_columns &lt;- c(&#39;achievement_count&#39;, &#39;athlete.id&#39;, &#39;average_cadence&#39;, &#39;average_heartrate&#39;, &#39;average_speed&#39;, &#39;average_watts&#39;, &#39;distance&#39;, &#39;elapsed_time&#39;, &#39;elev_high&#39;, &#39;elev_low&#39;, &#39;kilojoules&#39;, &#39;suffer_score&#39;, &#39;max_heartrate&#39;, &#39;max_speed&#39;, &#39;moving_time&#39;, &#39;start_date&#39;, &#39;start_date_local&#39;, &#39;name&#39;, &#39;total_elevation_gain&#39;, &#39;type&#39;, &#39;map.summary_polyline&#39;, &#39;location_city&#39;, &#39;upload_id&#39;)
+
+# delete data with a distance &lt; 3 km
+my_acts &lt;- filter(my_acts, distance &gt; 3 &amp; type != &#39;Workout&#39;)
+
+# transformations of data
+my_acts &lt;- mutate_at(my_acts, c(&#39;average_cadence&#39;, &#39;average_heartrate&#39;, &#39;average_speed&#39;, &#39;average_watts&#39;, &#39;distance&#39;, &#39;elapsed_time&#39;, &#39;elev_high&#39;, &#39;elev_low&#39;, &#39;kilojoules&#39;, &#39;suffer_score&#39;, &#39;max_heartrate&#39;, &#39;max_speed&#39;, &#39;moving_time&#39;, &#39;total_elevation_gain&#39;), as.numeric) %&gt;%
+  mutate(.,
+         activity_no = seq(1,nrow(.), 1),
+         elapsed_time = elapsed_time/60/60,
+         moving_time = moving_time/60/60,
+         elevation_per_km = total_elevation_gain/distance,
+         date = gsub(&quot;T.*$&quot;, &#39;&#39;, start_date) %&gt;%
+           as.POSIXct(., format = &#39;%Y-%m-%d&#39;),
+         EUdate = format(date, &#39;%d/%m/%Y&#39;),
+         month = format(date, &quot;%m&quot;),
+         day = format(date, &quot;%d&quot;),
+         year = format(date, &quot;%Y&quot;)) %&gt;%
+  mutate_at(., c(&#39;month&#39;, &#39;day&#39;, &#39;year&#39;), as.numeric) %&gt;%
+  arrange(., date) %&gt;%
+  group_by(year, type) %&gt;%
+  mutate(cum_distance = cumsum(distance)) %&gt;%
+  data.frame()</code></pre>
+</div>
+<div id="the-opportunities-are-endless" class="section level2">
+<h2>The opportunities are endless</h2>
+<p><strong>1. Plot cumulative distance through time</strong></p>
+<pre class="r"><code>ggplot(filter(my_acts, type == &#39;Ride&#39;), aes(distance, as.character(month))) +
+  geom_density_ridges() +
+  facet_wrap(~year)</code></pre>
+<div id="plot-distance-through-time" class="section level3">
+<h3>Plot distance through time</h3>
+</div>
+<div id="plot-speed-against-predictors" class="section level3">
+<h3>Plot speed against predictors</h3>
+<pre class="r"><code>ggpairs(filter(my_acts, type == &quot;Ride&quot; &amp; distance &gt; 20), 
+        columns = c(&#39;average_speed&#39;, &#39;distance&#39;, &#39;average_heartrate&#39;, &#39;average_cadence&#39;, &#39;total_elevation_gain&#39;, &#39;suffer_score&#39;, &#39;elevation_per_km&#39;),
+        mapping = aes(col = as.character(year)))</code></pre>
+</div>
+</div>

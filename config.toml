@@ -170,6 +170,12 @@ defaultContentLanguageInSubdir = false
   name = "Contact"
   url = "#contact"
   weight = 4
+  
+[[menu.main]]
+  name = "CV"
+  url = "cv/padfield_extendedCV.pdf"
+  weight = 5
+  
 
 # Taxonomies.
 [taxonomies]

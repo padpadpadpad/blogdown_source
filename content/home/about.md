@@ -3,6 +3,7 @@
 
 date = "2016-04-20T00:00:00"
 draft = false
+math = true
 
 widget = "about"
 
@@ -13,9 +14,10 @@ weight = 1
 [interests]
   interests = [
     "Microbial ecology",
-    "Effects of temperature on the biosphere",
+    "Climate change ecology",
     "Thermal adaptation",
     "Community ecology",
+    "R Programming",
     "Reproducible research"
   ]
 
@@ -32,12 +34,12 @@ weight = 1
 
 +++
 
-# Who am I?
+# A little about me
 
-I'm an ecologist studying how organisms adapt to change and how ecological processes scale from the very small (metabolism of a single cell) to the very big (ecosystem functions such as primary production).
+I am a ecologist with broad interests that span climate change, evolution, and community ecology. The common thread throughout my research so far has been the impacts of climate change on the biosphere, primarily on phytoplankton and bacteria. During my PhD with Gabriel Yvon-Durocher, I explored how warming will alter rates of photosynthesis and respiration in phytoplankton. To do this, I combined ideas from metabolic theory and experimental approaches from studying Icelandic streams to experimental evolution.
 
-I am interested in how and why communities coexist, and the feedbacks and indirect effects between ecological and evolutionary processes on species interactions within communities.
+I now work primarily on bacteria with Angus Buckling and his talented and lovely lab group. I am investigating how host-parasite interactions will change under warming, using the bacteria, _Pseudomonas fluorescens_ and its lytic phage, $\phi 2$. Other work I have collaborated with in the lab includes the importance of rapid evolution of diversity in impacting community structure and community coalescence, an emerging area of research examining the dynamics of whole microbial communities mixing.
 
-### The aim of this blog
+I an avid R programmer, and have experience in bioinformatics from 16S sequencing to _de novo_ genome assembly. If you have any questions about my code from publications or my R packages please get in touch! 
 
-I aim to use this blog to post helpful R scripts, hopefully describe the work I do in an understandable way and write about the challenges of coping in academia while looking after a chronically ill partner.
+In life, I live in Cornwall, UK, and have a chronically ill partner, Sophia, who lives with her parents in Cheltenham Spa. I maintain a [twitter thread](https://twitter.com/padpadpadpad/status/1106186559588585472) documenting her struggle and our life. We love watching the garden birds together (although she is only well enough to watch from the windown once a day at the moment). We also have a very cute sausage dog called Copper.

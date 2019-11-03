@@ -21,7 +21,7 @@ detailed_list = false
 
 ### 2019
 
-- **Padfield, D.**, Castledine, M., & Buckling, A. (2019) Temperature-dependent changes to host-parasite interactions alter the thermal performance of a bacterial host. *ISME* [doi pending](https://www.nature.com/articles/s41396-019-0526-5)
+- **Padfield, D.**, Castledine, M., & Buckling, A. (2019) Temperature-dependent changes to host-parasite interactions alter the thermal performance of a bacterial host. *ISME* [doi:10.1038/s41396-019-0526-5](https://www.nature.com/articles/s41396-019-0526-5)
 
 - Hesse, E., **Padfield, D.**, Bayer, F., Van Veen, E.M., Bryan, C.G., & Buckling, A. (2019) Anthropogenic remediation of heavy metals selects against natural microbial remediation. *Proceedings of the Royal Society* 286(1905) [doi:10.1098/rspb.2019.0804](https://royalsocietypublishing.org/doi/10.1098/rspb.2019.0804)
 

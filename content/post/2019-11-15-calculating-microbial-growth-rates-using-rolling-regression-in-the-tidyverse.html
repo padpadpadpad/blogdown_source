@@ -1,0 +1,179 @@
+---
+title: Calculating microbial growth rates from OD measurements using rolling regression in the tidyverse
+author: Daniel Padfield
+date: '2019-11-15'
+slug: calculating-microbial-growth-rates-from-od-using-rolling-regression
+categories: []
+tags:
+  - R
+  - tidyverse
+  - growth rate
+header:
+  caption: ''
+  image: ''
+highlight: yes
+math: yes
+draft: no
+---
+
+
+
+<div id="introduction" class="section level3">
+<h3>Introduction</h3>
+<p>Microbial ecologists often measure the growth rates of their favourite microbes, commonly using an OD (optical density) reader, with growth being related to the increasing OD of the sample through time. There are loads of ways to analyse these curves. Most of these, like <a href="https://github.com/sprouffske/growthcurver"><strong>growthcurver</strong></a> and the methods I used in my recent <a href="https://github.com/padpadpadpad/Padfield_2019_ISME_bact_phage_temperature">ISME</a> paper (<a href="https://github.com/padpadpadpad/nls.multstart"><strong>nls.multstart</strong></a> and functions from <a href="https://cran.r-project.org/web/packages/nlsMicrobio/nlsMicrobio.pdf"><strong>nlsMicrobio</strong></a>), fit models to logistic growth. Both methods can easily be scaled up to fit multiple curves at the same time.</p>
+<p>However, sometimes these methods do not do a good job. The most common example when this happens is if the wee critters do not reach stationary phase. Without stationary phase, most of the models will struggle to calculate carrying capacity, which also means the estimated exponential growth rate is poor. Similar things can occur if the bacteria form biofilms. This can result in increasingly noisy measurements at higher OD readings, again making the estimation of carrying capacity and growth rates more difficult.</p>
+<p>As an alternative, we can bin off trying to model the entire growth curve, and instead implement a rolling regression, where we fit a linear regression on a shifting window of points. On natural-log transformed OD, the slope of the regression between <span class="math inline">\(logOD\)</span> and time is equivalent to the exponential growth rate.</p>
+</div>
+<div id="get-started" class="section level3">
+<h3>Get started</h3>
+<p>We will load (and install) all the packages needed to run the example here. We will use the example data from <strong>growthcurver</strong> as example OD readings from a 96-well plate. Time is in hours, and I have created stacked all the wells into a single column for OD. Finally I created a column for <span class="math inline">\(logOD\)</span>, which is needed for the rolling regression, and <span class="math inline">\(log_{10}OD\)</span> which is needed for fitting the modified gompertz growth model from <strong>nlsMicrobio</strong>.</p>
+<pre class="r"><code># load packages
+library(tidyverse) #install.packages(tidyverse)
+library(zoo) #install.packages(zoo)
+library(broom) #install.packages(broom)
+library(growthcurver) # install.packages(growthcurver)
+library(nls.multstart) # install.packages(nls.multstart)
+# remotes::install_github(&#39;padpadpadpad/MicrobioUoE)
+
+# load example data
+d &lt;- growthcurver::growthdata %&gt;%
+  gather(., well, od, -time) %&gt;%
+  mutate(ln_od = log(od),
+         log10_od = log10(od))
+
+# have a look at the data
+glimpse(d)</code></pre>
+<pre><code>## Observations: 13,920
+## Variables: 5
+## $ time     &lt;dbl&gt; 0.0000000, 0.1666667, 0.3333333, 0.5000000, 0.6666667, 0.833…
+## $ well     &lt;chr&gt; &quot;A1&quot;, &quot;A1&quot;, &quot;A1&quot;, &quot;A1&quot;, &quot;A1&quot;, &quot;A1&quot;, &quot;A1&quot;, &quot;A1&quot;, &quot;A1&quot;, &quot;A1&quot;, …
+## $ od       &lt;dbl&gt; 0.05348585, 0.04800336, 0.05587451, 0.05131749, 0.04516719, …
+## $ ln_od    &lt;dbl&gt; -2.928338, -3.036484, -2.884647, -2.969724, -3.097384, -2.93…
+## $ log10_od &lt;dbl&gt; -1.271761, -1.318728, -1.252786, -1.289735, -1.345177, -1.27…</code></pre>
+</div>
+<div id="fit-modified-gompertz-model-for-bacterial-growth" class="section level3">
+<h3>Fit modified gompertz model for bacterial growth</h3>
+<p>We will first demonstrate rolling regression against the modified gompertz model for growth. I like the inclusion of the lag parameter in this model, especially for OD readers where the initial inoculate can often be so low that the OD reader cannot measure it. It means that exponential growth is only calculated at OD readings that we are confident represent changes in biomass of the bacteria.</p>
+<p>To do this, we’ll filter the data for just the first well, A1. Then we will fit the modified gompertz model and plot the results.</p>
+<pre class="r"><code># filter for just a single well
+d_a1 &lt;- filter(d, well == &#39;A1&#39;)
+
+# define gompertz growth model
+gompertz &lt;- function(log10_nmax, log10_n0, mumax, t, lag){
+  log10_n0 + (log10_nmax - log10_n0) * exp(-exp(mumax * exp(1) * (lag - t)/((log10_nmax - log10_n0) * log(10)) + 1))
+}
+
+# fit gompertz model
+fit_gomp &lt;- nls.multstart::nls_multstart(log10_od ~ gompertz(log10_nmax, log10_n0, mumax, t = time, lag),
+           data = d_a1,
+           start_lower = c(log10_nmax = -0.75, log10_n0 = -3, mumax = 0, lag = 0),
+           start_upper = c(log10_nmax = 0.5, log10_n0 = -1, mumax = 10, lag = 25),
+           lower = c(log10_nmax = -0.6, log10_n0 = -2, mumax = 0, lag = 0),
+           iter = 500,
+           supp_errors = &#39;Y&#39;)
+
+# get predictions
+gomp_preds &lt;- augment(fit_gomp)
+
+# plot on original scale
+ggplot(d_a1, aes(time, od)) +
+  geom_line(aes(time, 10^.fitted), gomp_preds, col = &#39;red&#39;) +
+  geom_point() +
+  theme_bw(base_size = 16) +
+  labs(x = &#39;time (hours)&#39;,
+       y = &#39;OD&#39;) +
+  annotate(geom = &#39;text&#39;, x = 0, y = 0.37, label = paste(&#39;µ = &#39;, round(coef(fit_gomp)[3], 2), &#39; hr-1&#39;, sep = &#39;&#39;), hjust = 0, size = MicrobioUoE::pts(16))</code></pre>
+<p><img src="/post/2019-11-15-calculating-microbial-growth-rates-using-rolling-regression-in-the-tidyverse_files/figure-html/plot_gompz-1.png" width="768" /></p>
+<p>However, lets say our measurements end at 10 or 11 hours. When we have not reached stationary phase, the traditional bacterial growth models are likely to have trouble fitting.</p>
+<pre class="r"><code>d_a1 &lt;- filter(d_a1, time &lt; 10.5)
+
+# plot data without stationary phase
+ggplot(d_a1, aes(time, od)) +
+  geom_point() +
+  theme_bw(base_size = 16) +
+  labs(x = &#39;time (hours)&#39;,
+       y = &#39;OD&#39;)</code></pre>
+<p><img src="/post/2019-11-15-calculating-microbial-growth-rates-using-rolling-regression-in-the-tidyverse_files/figure-html/plot_short-1.png" width="768" /></p>
+</div>
+<div id="using-rolling-regression" class="section level3">
+<h3>Using rolling regression</h3>
+<p>Rolling regression allows us to calculate exponential growth rate even when we do not have the whole curve. First, we need to create our own rolling regression function. This method is mainly taken from G. Grothendieck’s <a href="https://stackoverflow.com/questions/49762128/rolling-regression-by-group-in-the-tidyverse">StackOverflow answer</a>. In the function, we specify our output from a standard <strong>lm</strong> object. So if you know how to access the output of <strong>lm()</strong>, you can add any extra details you want.</p>
+<p>One of the big decisions in rolling regression is deciding how many points you are going to calculate the growth rate over. In this example, measurements are taken every 0.167 hours, about every ten minutes. I want a shifting window to span a minimum of 1.5 hours, so I calculate <code>num_points</code> to define the number of points the rolling regression will act on.</p>
+<p>We then run the rolling regression, using <strong>zoo::rollapplyr()</strong> and <strong>dplyr::do()</strong>. Finally, in order to illustrate what the rolling regression is doing, I created a predictions dataframe for every single linear model that is fitted.</p>
+<pre class="r"><code># create the rolling regression function
+roll_regress &lt;- function(x){
+  temp &lt;- data.frame(x)
+  mod &lt;- lm(temp)
+  temp &lt;- data.frame(slope = coef(mod)[[2]],
+                     slope_lwr = confint(mod)[2, ][[1]],
+                     slope_upr = confint(mod)[2, ][[2]],
+                     intercept = coef(mod)[[1]],
+                     rsq = summary(mod)$r.squared, stringsAsFactors = FALSE)
+  return(temp)
+}
+
+# define window - here every ~1.5 hours
+num_points = ceiling(1.5*60/(60*0.167)) 
+
+# run rolling regression on ln od ~ time
+models &lt;- d_a1 %&gt;%
+  do(cbind(model = select(., ln_od, time) %&gt;% 
+           zoo::rollapplyr(width = num_points, roll_regress, by.column = FALSE, fill = NA, align = &#39;center&#39;),
+           time = select(., time),
+           ln_od = select(., ln_od))) %&gt;%
+  rename_all(., gsub, pattern = &#39;model.&#39;, replacement = &#39;&#39;)
+
+# create predictions
+preds &lt;- models %&gt;%
+  filter(., !is.na(slope)) %&gt;%
+  group_by(time) %&gt;%
+  do(data.frame(time2 = c(.$time - 2, .$time + 2))) %&gt;%
+  left_join(., models) %&gt;%
+  mutate(pred = (slope*time2) + intercept)</code></pre>
+<p>We can plot the rolling regression through time. I have extracted the exponential growth rate as the maximum slope of any of the regressions. Reassuringly the value of <span class="math inline">\(\mu\)</span> we get is very similar to that of using the gompertz model. I have also plotted the time at which the maximum slope occurred. It looks pretty close to mid-log to me.</p>
+<pre class="r"><code># calculate the exponential growth rate
+growth_rate &lt;- filter(models, slope == max(slope, na.rm = TRUE))
+
+# plot rolling regression
+ggplot(d_a1, aes(time, ln_od)) +
+  geom_point() +
+  geom_line(aes(time2, pred, group = time), col = &#39;red&#39;, preds, alpha = 0.5) +
+  theme_bw(base_size = 16) +
+  geom_segment(aes(x = time, y = -3, xend = time, yend = ln_od), growth_rate) +
+  geom_segment(aes(x = 0, y = ln_od, xend = time, yend = ln_od), growth_rate) +
+  annotate(geom = &#39;text&#39;, x = 0, y = -1, label = paste(&#39;µ = &#39;, round(growth_rate$slope, 2), &#39; hr-1\n95%CI:(&#39;,round(growth_rate$slope_lwr, 2), &#39;-&#39;, round(growth_rate$slope_upr, 2), &#39;)&#39;, sep = &#39;&#39;), hjust = 0, size = MicrobioUoE::pts(16)) +
+  labs(x = &#39;time (hours)&#39;,
+       y = &#39;OD&#39;)</code></pre>
+<p><img src="/post/2019-11-15-calculating-microbial-growth-rates-using-rolling-regression-in-the-tidyverse_files/figure-html/plot-1.png" width="768" /></p>
+</div>
+<div id="the-opportunities-are-endless" class="section level3">
+<h3>The opportunities are endless</h3>
+<p>The great thing about this approach is its flexibility. It can easily be rolled out over all the wells in that plate, using <strong>group_by()</strong>.</p>
+<pre class="r"><code># run rolling regression on ln od_cor ~ time
+models &lt;- d %&gt;%
+  group_by(well) %&gt;%
+  do(cbind(model = select(., ln_od, time) %&gt;% 
+           zoo::rollapplyr(width = num_points, roll_regress, by.column = FALSE, fill = NA, align = &#39;center&#39;),
+           time = select(., time),
+           ln_od = select(., ln_od))) %&gt;%
+  rename_all(., gsub, pattern = &#39;model.&#39;, replacement = &#39;&#39;)
+
+# calculate growth rate for each one
+growth_rates &lt;- models %&gt;%
+  filter(slope == max(slope, na.rm = TRUE)) %&gt;%
+  ungroup()
+
+glimpse(growth_rates)</code></pre>
+<pre><code>## Observations: 96
+## Variables: 8
+## $ well      &lt;chr&gt; &quot;A1&quot;, &quot;A10&quot;, &quot;A11&quot;, &quot;A12&quot;, &quot;A2&quot;, &quot;A3&quot;, &quot;A4&quot;, &quot;A5&quot;, &quot;A6&quot;, &quot;A…
+## $ slope     &lt;dbl&gt; 0.5373305, 0.5378633, 0.6723146, 0.5665508, 0.4986314, 0.43…
+## $ slope_lwr &lt;dbl&gt; 0.5164655, 0.5102408, 0.6339382, 0.5433664, 0.4706380, 0.38…
+## $ slope_upr &lt;dbl&gt; 0.5581955, 0.5654858, 0.7106910, 0.5897353, 0.5266249, 0.47…
+## $ intercept &lt;dbl&gt; -6.274261, -6.573137, -6.547136, -6.767416, -6.945429, -6.6…
+## $ rsq       &lt;dbl&gt; 0.9981159, 0.9967090, 0.9959375, 0.9979079, 0.9960698, 0.98…
+## $ time      &lt;dbl&gt; 8.166667, 8.333333, 7.166667, 8.833333, 10.166667, 10.50000…
+## $ ln_od     &lt;dbl&gt; -1.871105, -2.087377, -1.721166, -1.743515, -1.876257, -2.1…</code></pre>
+<p>These growth rates can then be used for downstream analyses, and the method can easily be used over multiple plates and for many different types of data. Finally, you could also filter the regressions by <span class="math inline">\(R^{2}\)</span> values, making sure you only kept good fitting regressions. Or do a sensitivity analysis of different sized window sizes to make sure your chosen window is suitable.</p>
+<p>How do you get your data off of the OD reader? I have written scripts to collate hundreds of plate readings into a single dataframe in R. Let me know if you would like me to do a blog post on that process! Thanks for reading.</p>
+</div>
